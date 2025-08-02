@@ -1,30 +1,55 @@
 //SPDX-License-Identifier: MIT
-pragma solidity >=0.7.10;
-import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+pragma solidity >=0.8.7;
+import {PriceConverter} from "./PriceConverter.sol";
 
 contract FundMe{
 
-    AggregatorV3Interface priceFeed = AggregatorV3Interface(0x694AA1769357215DE4FAC081bf1f309aDC325306);
-    uint256 MINIMUM_AMOUNT = 2e18;
+    error NotOwner();
+    error SendFailed();
+    error MinimumEthNotSend();
+
+    uint256 constant MINIMUM_AMOUNT = 2e18;
     address[] public funders;
     mapping(address => uint256)public addressToAmountFunded;
 
-    function getVersion() public view returns(uint256){
-        return priceFeed.version();
+    address public immutable i_owner;
+    constructor(){
+        i_owner = msg.sender;
     }
 
-    function getLatestPrice() public view returns(uint256){
-        (,int price,,,)=priceFeed.latestRoundData();
-        return uint(price)*1e10;
-    }
-
-    function getConversionRate(uint ethAmount) internal view returns(uint256){
-        return (getLatestPrice()*ethAmount)/1e18;
-    }
 
     function fund() public payable{
-        require(getConversionRate(msg.value)>MINIMUM_AMOUNT,"Please send minimum Eth!!!");
-        funders.push(msg.sender);
+        //require(PriceConverter.getConversionRate(msg.value)>MINIMUM_AMOUNT,"Please send minimum Eth!!!");
+        if(PriceConverter.getConversionRate(msg.value)<MINIMUM_AMOUNT)
+        revert MinimumEthNotSend();
         addressToAmountFunded[msg.sender]+=msg.value;
+        funders.push(msg.sender);
+    }
+
+
+    receive() external payable{
+        fund();
+    }
+    fallback() external payable{
+        fund();
+    }
+
+
+    modifier onlyowner{
+        // require(msg.sender == i_owner,"You must be a owner of this contract to withdraw!");
+        if(msg.sender!=i_owner)
+        revert NotOwner();
+        _;
+    }
+
+    function withdraw() public onlyowner{
+        for(uint256 fundersIndex=0;fundersIndex<funders.length;fundersIndex++){
+            addressToAmountFunded[funders[fundersIndex]] = 0;
+        }
+        delete funders;
+        (bool success,) = payable(msg.sender).call{value:address(this).balance}("");
+        //require(success,"Send failed!");
+        if(success != true)
+        revert SendFailed();
     }
 }
